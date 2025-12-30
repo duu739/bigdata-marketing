@@ -11,10 +11,16 @@ from sklearn.preprocessing import StandardScaler
 from openai import OpenAI
 
 # ==========================================
-# 1. API 金鑰與初始化
+# 1. API 金鑰與初始化 (改為從 Secrets 讀取)
 # ==========================================
-OPENAI_API_KEY = "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"
-YOUTUBE_API_KEY = "AIzaSyDTWvLm7NJ24_4PdY7uK3JDAsodISYbIx0"
+try:
+    # 這裡會自動讀取你在 Streamlit Cloud 後台 Settings -> Secrets 貼上的金鑰
+    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+    YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
+except KeyError:
+    st.error("❌ 找不到 API 金鑰！請確保已在 Streamlit Cloud 後台的 Secrets 中設定 OPENAI_API_KEY 與 YOUTUBE_API_KEY。")
+    st.stop()
+
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 def get_youtube_service():
@@ -33,6 +39,7 @@ def analyze_advanced_vision(img_array):
     對比度 = np.std(gray)
     飽和度 = np.mean(hsv[:, :, 1])
 
+    # 使用專案根目錄下的模型檔
     face_cascade_path = "haarcascade_frontalface_default.xml"
     face_cascade = cv2.CascadeClassifier(face_cascade_path)
     有臉 = 0
@@ -70,7 +77,7 @@ def calculate_clustering_logic(df):
     # Elbow Method 選最佳 k
     diff = np.diff(wcss)
     diff_ratio = diff[1:] / diff[:-1]
-    optimal_k = np.argmax(diff_ratio < 0.5) + 2  # 自動選群數
+    optimal_k = np.argmax(diff_ratio < 0.5) + 2 
     kmeans = KMeans(n_clusters=optimal_k, init='k-means++', random_state=42, n_init=10)
     df['風格'] = kmeans.fit_predict(X_scaled)
     return df, wcss, optimal_k
@@ -117,7 +124,6 @@ st.title("🩺 YouTube 爆紅基因診斷室")
 if start_analysis and user_topic and uploaded_file and user_title:
     with st.spinner(f"正在分析「{user_topic}」的市場爆紅基因..."):
         try:
-            # 市場資料抓取（長影片 >3分鐘）
             youtube = get_youtube_service()
             search_res = youtube.search().list(
                 q=user_topic, type="video", part="id,snippet", maxResults=num_videos, order="viewCount",
@@ -147,29 +153,24 @@ if start_analysis and user_topic and uploaded_file and user_title:
                 '標題長度','標題含數字','標題含標點','觀看數','影片秒數','影片連結','影片標題'
             ])
 
-            # 分群
             df, wcss, optimal_k = calculate_clustering_logic(df)
             cluster_titles = generate_cluster_titles(df, client)
             df['風格標題'] = df['風格'].map(cluster_titles)
 
-            # 市場趨勢圖表
             st.subheader("📊 市場趨勢分析")
             col_viz1, col_viz2 = st.columns(2)
             with col_viz1:
-                st.markdown("**Elbow Method**：橫軸 K，縱軸 WCSS，轉折點可判斷最佳分群數。")
                 fig_elbow = px.line(x=range(1,len(wcss)+1),y=wcss,title="WCSS 轉折點分析 (Elbow)",labels={'x':'K','y':'WCSS'})
                 fig_elbow.update_traces(mode='lines+markers')
                 st.plotly_chart(fig_elbow,use_container_width=True)
 
             with col_viz2:
-                st.markdown("**市場視覺氣泡圖**：X=對比度，Y=飽和度，氣泡=觀看數，顏色=分群風格。")
                 fig_bubble = px.scatter(
                     df,x='對比度',y='飽和度',size='觀看數',color='風格標題',
                     title="市場視覺分佈 (氣泡大小=觀看數)"
                 )
                 st.plotly_chart(fig_bubble,use_container_width=True)
 
-            # 個人診斷
             user_img_bytes = uploaded_file.read()
             user_vision = analyze_advanced_vision(np.frombuffer(user_img_bytes, np.uint8))
             user_title_info = analyze_title_features(user_title)
@@ -183,7 +184,7 @@ if start_analysis and user_topic and uploaded_file and user_title:
                 fig_radar = go.Figure()
                 fig_radar.add_trace(go.Scatterpolar(r=user_vision,theta=categories,fill='toself',name='你的縮圖',line_color='red'))
                 fig_radar.add_trace(go.Scatterpolar(r=m_avg_v,theta=categories,fill='toself',name='市場平均',line_color='blue'))
-                fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True,range=[0,255])),width=600,height=600,title="視覺特徵雷達對比")
+                fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True,range=[0,255])),title="視覺特徵雷達對比")
                 st.plotly_chart(fig_radar,use_container_width=True)
 
             with diag_col2:
@@ -192,45 +193,33 @@ if start_analysis and user_topic and uploaded_file and user_title:
                     "你的數值":[f"{user_vision[0]:.1f}",f"{user_vision[1]:.1f}",f"{user_vision[2]:.1f}",f"{user_vision[3]:.1f}%","是" if user_vision[4] else "否",
                                 f"{user_title_info[0]} 字","是" if user_title_info[1] else "否","是" if user_title_info[2] else "否"],
                     "市場平均":[f"{df['亮度'].mean():.1f}",f"{df['對比度'].mean():.1f}",f"{df['飽和度'].mean():.1f}",f"{df['複雜度'].mean():.1f}%",
-                               f"{df['有臉'].mean()*100:.1f}%","{:.1f} 字".format(df['標題長度'].mean()),
-                               "{:.1f}%".format(df['標題含數字'].mean()*100),"{:.1f}%".format(df['標題含標點'].mean()*100)]
+                               f"{df['有臉'].mean()*100:.1f}%", f"{df['標題長度'].mean():.1f} 字",
+                               f"{df['標題含數字'].mean()*100:.1f}%", f"{df['標題含標點'].mean()*100:.1f}%"]
                 })
                 st.table(comparison_df)
 
-            # 原始資料
             st.divider()
             st.subheader("📄 市場原始資料")
             st.dataframe(df.rename(columns={
                 '亮度':'亮度','對比度':'對比度','飽和度':'飽和度','複雜度':'視覺複雜度','有臉':'含人臉',
                 '標題長度':'標題長度','標題含數字':'標題含數字','標題含標點':'標題含標點',
-                '觀看數':'觀看數','影片秒數':'影片長度(秒)','連結':'影片連結','影片標題':'影片標題','風格標題':'分群風格'
+                '觀看數':'觀看數','影片秒數':'影片長度(秒)','影片連結':'影片連結','影片標題':'影片標題','風格標題':'分群風格'
             }))
 
-            # AI 建議
             st.divider()
             st.subheader("🤖 AI 營運專家建議")
             ai_spinner = st.empty()
             ai_spinner.info("AI 正在分析中，請稍候...")
             prompt = f"""
-            你是一位 YouTube 增長專家，專注於縮圖與標題優化。
             主題：{user_topic}
-
-            市場平均：
-            對比度 {df['對比度'].mean():.1f}，飽和度 {df['飽和度'].mean():.1f}，複雜度 {df['複雜度'].mean():.1f}%，有臉率 {df['有臉'].mean()*100:.1f}%
-            標題平均長度 {df['標題長度'].mean():.1f} 字，含數字 {df['標題含數字'].mean()*100:.1f}%，含標點 {df['標題含標點'].mean()*100:.1f}%
-
-            使用者：
-            縮圖亮度 {user_vision[0]:.1f}，對比 {user_vision[1]:.1f}，飽和度 {user_vision[2]:.1f}，複雜度 {user_vision[3]:.1f}%，有臉 {"有" if user_vision[4] else "無"}
-            標題：{user_title}，長度 {user_title_info[0]}，含數字 {"是" if user_title_info[1] else "否"}，含標點 {"是" if user_title_info[2] else "否"}
-
-            請給出 3 個具體可執行的優化建議：
-            1) 對縮圖的亮度、對比、飽和度、複雜度與人臉使用
-            2) 對標題的長度、數字與標點使用
-            3) 語氣可以犀利但務必具體
+            市場平均：對比度 {df['對比度'].mean():.1f}，飽和度 {df['飽和度'].mean():.1f}，複雜度 {df['複雜度'].mean():.1f}%，有臉率 {df['有臉'].mean()*100:.1f}%
+            使用者數據：對比 {user_vision[1]:.1f}，飽和度 {user_vision[2]:.1f}，複雜度 {user_vision[3]:.1f}%，有臉 {"有" if user_vision[4] else "無"}
+            使用者標題：{user_title}
+            請給出 3 個犀利且可執行的優化建議。
             """
             completion = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role":"system","content":"你是一位專業 YouTube 分析師，給出具體可執行建議，繁體中文回答。"},
+                messages=[{"role":"system","content":"你是一位專業 YouTube 分析師。"},
                           {"role":"user","content":prompt}]
             )
             ai_spinner.empty()
