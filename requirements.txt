@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+opencv-python-headless
+requests
+plotly
+scikit-learn
+openai
+google-api-python-client
